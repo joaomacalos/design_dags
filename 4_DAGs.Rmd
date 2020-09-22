@@ -1,0 +1,401 @@
+---
+title: "1. DAGs and the Structural Causal Model"
+author: "João Pedro S. Macalós"
+date: "9/22/2020"
+output: html_document
+css: mycss.css
+---
+
+```{r global-options, include=FALSE}
+knitr::opts_chunk$set(fig.width=6.5, fig.height=4, fig.path='Figs/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(ggdag)
+theme_set(theme_dag())
+library(dagitty)
+library(knitr)
+library(kableExtra)
+```
+
+# 1. Preliminaries
+
+## 1.1 General info
+
+* Welcome everyone! 
+
+* We will have an introductory round later
+
+* Please mute your microphone unless you are speaking
+
+* Please activate your video (if possible)
+
+* You are not allowed to record the session
+
+* From students to students
+
+* All the material will be made available via the YSI events and my github page
+
+* Disclaimer: This webinars series does not provide any credits
+
+* Format of the discussions:
+  * Theory + application
+  * Focus on young scholars' inputs
+  * (Open for suggestions)
+  
+  
+## 1.2 Motivation of this series
+
+* The book of why
+
+* The almost complete absence of DAGs in 'metrics literature
+
+
+## 1.3 Young Scholars Initiative
+
+* The Young Scholars Initiative (YSI) is an international community comprised of students, young professionals, and researchers.
+
+* The community is organized through a number of working groups set up along topical lines. In these groups, we create stimulating environments for new economic thought and inquiry in a wide range of subject matters
+
+* Why States and Markets WG?
+  * Pluralism in economics: research, teaching, and **methods**
+
+
+## 1.4 Schedule
+
+* ~ once every week
+
+* Breaks ~every 3 week
+
+```{r}
+library(kableExtra)
+
+schedule <- tribble(
+  ~N, ~Session, ~Reading, ~Date,
+  '1', 'DAGs and the Structural Causal Model', 'Ch. 4', '09/22/2020',
+  '2', 'Potential Outcomes: Introduction', 'Ch. 5', '09/29/2020',
+  '3', 'Matching and subclassification', 'Ch. 6', '10/06/2020',
+  '--', 'BREAK', '--', '10/13/2020',
+  '4', 'Instrumental variables', 'Ch. 8', '10/20/2020',
+  '5', 'Dagifying IVs', 'TBD', '10/27/2020',
+  '6', 'Regression Discontinuity Designs', 'Ch. 7', '11/03/2020',
+  '--', 'BREAK - YSI Plenary', '--', '11/10/2020',
+  '--', 'BREAK - YSI Plenary', '--', '11/17/2020',
+  '7', 'Difference-in-differences', 'Ch. 9', '11/24/2020',
+  '8', 'Dagifying DiD', 'TBD', '12/01/2020',
+  '9', 'Front-door criterion: a new research design?', 'TBD', '12/08/2020',
+  '10', 'Conclusion', '--', '12/15/2020'
+) %>%
+  mutate(Time = '19h CET')
+
+schedule %>%
+  kable %>%
+  kable_styling() %>%
+  row_spec(1, bold = T, color = "white", background = "red")
+```
+
+
+# 2. Directed Acyclic Graphs (DAGs) and the Structural Causal Model
+
+* Simpson's paradox:
+A relationship that holds for the population as a whole is reversed when we stratify the data into subgroups.
+
+Example: Relationship between *exercise*, *age*, and *cholesterol*:
+
+```{r}
+set.seed(44)
+N = 5000
+
+simpson1 <- tibble(
+  age = runif(N, 20, 70),
+  exercise = age + rnorm(N),
+  cholesterol = 1.04*age - 1.025*exercise + rnorm(N)
+)
+
+```
+
+```{r}
+simpson1 %>%
+  mutate(bin = ntile(age, 5),
+         bin = case_when(bin == 1 ~ 20,
+                         bin == 2 ~ 30,
+                         bin == 3 ~ 40,
+                         bin == 4 ~ 50,
+                         bin == 5 ~ 60),
+         bin = as_factor(bin)) %>%
+  ggplot(aes(x = exercise, y = cholesterol)) +
+  geom_point(aes(color = bin), alpha = .2) +
+  geom_smooth(aes(group = bin, color = bin), method = 'lm', size = 1, se = F) +
+  geom_smooth(method = 'lm', color = 'cornsilk4', se = F) +
+  #scale_color_manual('Age', values = terrain.colors(6)) +
+  scale_color_brewer('Age', palette = 'Dark2') +
+  labs(x = 'Exercise', y = 'Cholesterol') +
+  theme_classic() +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+```
+
+We can see in the same in this table:
+
+```{r}
+simpson12 <- simpson1 %>%
+  mutate(bin = ntile(age, 2),
+         bin = if_else(bin == 1, 'low', 'high'),
+         bin = as_factor(bin)) %>%
+  mutate(exercise = ntile(exercise, 2),
+         age = ntile(age, 2),
+         cholesterol = ntile(cholesterol, 2))
+
+mytable <- xtabs(~ cholesterol + age + exercise, data = simpson12)
+mt2 <- ftable(mytable)
+
+```
+
+```{r}
+tribble(~age, ~low_exercise, ~high_exercise,
+        'Low age', 
+        str_c(mt2[1,1], ' out of ', (mt2[1,1] + mt2[3,1]), ' with low cholesterol ', '(', 100*round(mt2[1,1] / (mt2[1,1] + mt2[3,1]), 2), '%)'),
+        str_c(mt2[1,2], ' out of ', (mt2[1,2] + mt2[3,2]), ' with low cholesterol ', '(', 100*round(mt2[1,2] / (mt2[1,2] + mt2[3,2]), 2), '%)'),
+        'High age', 
+        str_c(mt2[2,1], ' out of ', (mt2[2,1]+mt2[4,1]), ' with low cholesterol ', '(', 100*round(mt2[2,1]/(mt2[2,1]+mt2[4,1]), 2), '%)'),
+        str_c(mt2[2,2], ' out of ', (mt2[2,2]+mt2[4,2]), ' with low cholesterol ', '(', 100*round(mt2[2,2]/(mt2[2,2]+mt2[4,2]), 2), '%)'),
+        'Total', 
+        str_c((mt2[1,1] + mt2[2,1]), ' out of ', 2500, ' with low cholesterol ', '(', 100*round((mt2[1,1] + mt2[2,1])/2500, 2), '%)'),
+        str_c((mt2[1,2] + mt2[2,2]), ' out of ', 2500, ' with low cholesterol ', '(', 100*round((mt2[1,2] + mt2[2,2])/2500, 2), '%)')) %>%
+  knitr::kable(col.names = c('', 'Low exercise', 'High exercise')) %>%
+  kable_styling()
+```
+
+Should we stratify the data?
+
+
+<p>&nbsp;</p>
+<p>&nbsp;</p> 
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p> 
+<p>&nbsp;</p>
+
+
+
+But what if the data looked like this:
+
+```{r}
+tribble(~a, ~b, ~c,
+        'Protective measures', 
+        str_c(mt2[1,1], ' out of ', (mt2[1,1] + mt2[3,1]), ' not infected ', '(', 100*round(mt2[1,1] / (mt2[1,1] + mt2[3,1]), 2), '%)'),
+        str_c(mt2[1,2], ' out of ', (mt2[1,2] + mt2[3,2]), ' not infected ', '(', 100*round(mt2[1,2] / (mt2[1,2] + mt2[3,2]), 2), '%)'),
+        'Careless behavior', 
+        str_c(mt2[2,1], ' out of ', (mt2[2,1]+mt2[4,1]), ' not infected ', '(', 100*round(mt2[2,1]/(mt2[2,1]+mt2[4,1]), 2), '%)'),
+        str_c(mt2[2,2], ' out of ', (mt2[2,2]+mt2[4,2]), ' not infected ', '(', 100*round(mt2[2,2]/(mt2[2,2]+mt2[4,2]), 2), '%)'),
+        'Total', 
+        str_c((mt2[1,1] + mt2[2,1]), ' out of ', 2500, ' not infected ', '(', 100*round((mt2[1,1] + mt2[2,1])/2500, 2), '%)'),
+        str_c((mt2[1,2] + mt2[2,2]), ' out of ', 2500, ' not infected ', '(', 100*round((mt2[1,2] + mt2[2,2])/2500, 2), '%)')) %>%
+  knitr::kable(col.names = c('', 'School', 'No school')) %>%
+  kable_styling()
+```
+
+The data is the same...
+
+Solution to the Simpson's paradox: causal theory
+
+DAGs are a way to formalize theoretical background, and to formalize (automatize) how and when it is possible to identify causal effects with the data at hand.
+
+## Basic graphic structures
+
+A graph is composed of *nodes* and *edges*. In a directed graph, arrows indicate the flow of causation.
+
+Only Directed *acyclic* graphs (DAGs) are covered in Pearl's causal theory -- no cycles (self-causation) are allowed.
+
+```{r, fig.width=10, fig.height=3.5}
+dag_chain <- dagify(Z ~ X,
+                    Y ~ Z,
+                    coords = tribble(
+                      ~name, ~x, ~y,
+                      'X', 1, 1,
+                      'Z', 2, 1,
+                      'Y', 3, 1
+                    ))
+
+dag_fork <- dagify(X ~ Z,
+                    Y ~ Z,
+                    coords = tribble(
+                      ~name, ~x, ~y,
+                      'X', 1, 1,
+                      'Z', 2, 2,
+                      'Y', 3, 1
+                    ))
+
+dag_collider <- dagify(Z ~ X,
+                    Z ~ Y,
+                    coords = tribble(
+                      ~name, ~x, ~y,
+                      'X', 1, 2,
+                      'Z', 2, 1,
+                      'Y', 3, 2
+                    ))
+
+
+bd1 <- ggdag(dag_chain) + labs(title = 'Chain')
+bd2 <- ggdag(dag_fork) + labs(title = 'Fork')
+bd3 <- ggdag(dag_collider) + labs(title = 'Collider')
+
+ggarrange(bd1, bd2, bd3, ncol = 3)
+
+```
+
+## D-separation
+
+"*d-separation* (the *d* stands for "directional") allows us to determine, for any pair of nodes, whether the nodes are *d*-connected, meaning that there exists a connecting path between them, or *d*-separated, meaning that there exists no such path.
+
+When we say that a pair of nodes are *d*-separated, we mean that the variables they represent are definitely independent."
+
+> Definition (d-separation): A path $p$ is blocked by a set of nodes $Z$ if and only if
+
+> 1. $p$ contains a chain of nodes $A \rightarrow B \rightarrow C$ or a fork $A \leftarrow B \rightarrow C$ such that the middle node $B$ is in $Z$ (i.e., $B$ is conditioned on), or
+
+> 2. $p$ contains a collider $A \rightarrow B \leftarrow C$ such that the collision node $B$ is not in $Z$, and no descendant of $B$ is in $Z$
+
+> (Pearl et al., 'Primer', p. 46)
+
+
+## Non-causal paths and the Backdoor criterion
+
+* Causal association flows from $T$ to $Y$ along *directed* paths
+
+* Any other flows between these two nodes are *non-causal*
+
+* *non-causal* links can arise:
+
+- if a node, say $Z$, goes into $T$ and into $Y$. 
+  - This are known as **backdoor** paths because they have an edge that goes in the "backdoor" of the treatment/exposure variable.
+
+- if a collider node in between the two nodes is conditioned.
+
+
+> Definition (Backdoor criterion): Given an ordered pair of variables $(X, Y)$ in a DAG, a set of variables $Z$ satisfies the backdoor criterion relative to $(X, Y)$ if:
+
+> 1. $Z$ blocks all paths between $X$ and $Y$ that contain an arrow into $X$ (backdoor paths)
+
+> 2. $Z$ does not contain any descendents of $T$
+
+> (Pearl et al., 'Primer', p. 61)
+
+In words, if a given set of variables $Z$ meet the backdoor criterion, the causal effect between $X$ and $Y$ can be identified.
+
+
+## Examples:
+
+### 2.1 Chains (mediation)
+
+```{r}
+create_arrow <- function(text = '') {
+  arrow_med <- ggplot() + 
+  geom_segment(aes(x=1, xend=2, y=2, yend=2), size = 3,
+               arrow = arrow(length = unit(0.5, "cm"))) +
+  annotate('text', x = 1.53, y = 2.2, label = text) +
+  scale_y_discrete(limits = c(2.5, 3))
+}
+```
+
+
+```{r, fig.width=12}
+med_dag1 <- mediation_triangle(x = 'Coffee', y = 'Agitation', m = 'Caffeine') %>%
+  ggdag_dconnected(text = F, use_labels = 'label') +
+  theme(legend.position = 'none')
+
+arrow_med <- create_arrow('Controlling for \n caffeine')
+
+med_dag2 <- mediation_triangle(x = 'Coffee', y = 'Agitation', m = 'Caffeine') %>%
+  ggdag_dconnected(text = F, use_labels = 'label', controlling_for = 'm')
+
+ggarrange(med_dag1, arrow_med, med_dag2, ncol = 3, widths = c(4.75, 1, 4.75))
+```
+
+While in the population, coffee is associated with agitation, if we control for the ingestion of caffeine, we see that the association disappears (e.g., decaf coffee does not lead to agitation).
+
+### 2.2 Forks (Confounding)
+
+```{r, fig.width=12}
+dag_conf1 <- confounder_triangle(x = "Coffee", y = "Lung Cancer", z = "Smoking") %>% 
+  ggdag_dconnected(text = FALSE, use_labels = "label") +
+  theme(legend.position = 'none')
+
+arrow_conf <- create_arrow('Controlling for \n smoking')
+
+dag_conf2 <- confounder_triangle(x = "Coffee", y = "Lung Cancer", z = "Smoking") %>%
+  ggdag_dconnected(text = FALSE, use_labels = "label", controlling_for = 'z')
+
+ggarrange(dag_conf1, arrow_conf, dag_conf2, widths = c(4.75, 1, 4.75), ncol = 3)
+```
+
+
+### 2.3 Collider bias
+
+
+```{r, fig.width=12}
+collider_dag1 <- collider_triangle(x = 'Beauty', y = 'Talent', m = 'Holliwood') %>% 
+  ggdag_dseparated(use_labels = 'label', text = F) +
+  theme(legend.position = 'none')
+
+arrow_col <- create_arrow('Controlling for \nHolliwood')
+
+collider_dag2 <- collider_triangle(x = 'Beauty', y = 'Talent', m = 'Holliwood') %>% 
+  ggdag_dseparated(controlling_for = "m", use_labels = 'label', text = F)
+
+ggpubr::ggarrange(collider_dag1, arrow_col, collider_dag2, widths = c(4.75, 1, 4.75), ncol = 3)
+```
+
+
+## Numerical example
+
+```{r, echo = T}
+# Population
+N = 10000
+
+# X and Y are random variables
+beauty <- rnorm(N)
+talent <- rnorm(N)
+
+# M is caused by X and Y
+holliwood <- beauty + talent
+holliwood <- holliwood > quantile(holliwood, 0.90)
+```
+
+
+```{r}
+fig_pop <- tibble(x = beauty, y = talent, h = holliwood, all = T) %>% {
+  ggplot(.) +
+  geom_point(data = ., aes(x = x, y = y, color = 'Aspiring actors and actresses'), alpha = .5) +
+  geom_point(data = filter(., h == 1), aes(x = x, y = y, color = 'Stars (collider activated)'), alpha = .1) +
+  labs(x = 'Beauty', y = 'Talent') +
+  geom_smooth(method = 'lm', aes(x = x, y = y, color = 'Aspiring actors and actresses'), se = F) +
+  geom_smooth(data = filter(., h == 1), method = 'lm', aes(x = x, y = y, color = 'Stars (collider activated)'), se = F) +
+  scale_color_manual('', values = c('dodgerblue3', 'chartreuse3')) +
+  theme_classic() +
+  theme(legend.position = c(.2, .95),
+        legend.background = element_blank())
+  
+}
+
+fig_pop
+```
+
+
+
+
+## Final remarks
+
+* DAGs strongest assumption: absence of arrows.
+
+* Credibility revolution $\rightarrow$ emphasis on **research designs** to identify causal effects
+
+* Can DAGs be used to clarify the hypotheses underlying these different designs?
+
+
+
