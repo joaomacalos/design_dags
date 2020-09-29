@@ -1,0 +1,516 @@
+---
+title: "Potential Outcomes"
+author: "João Pedro S. Macalós"
+date: "9/29/2020"
+output:
+  bookdown::github_document2:
+    pandoc_args: --webtex
+css: mycss.css
+always_allow_html: true
+---
+
+```{r global-options, include=FALSE}
+knitr::opts_chunk$set(fig.width=6.5, fig.height=4, fig.path='Figs/',
+                      echo=FALSE, warning=FALSE, message=FALSE,
+                      dev.args = list(png = list(type = "cairo")))
+```
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(ggdag)
+theme_set(theme_dag())
+library(dagitty)
+library(knitr)
+library(kableExtra)
+library(data.table)
+```
+
+## Today
+
+```{r}
+library(kableExtra)
+
+schedule <- tribble(
+  ~N, ~Session, ~Reading, ~Date,
+  '1', 'DAGs and the Structural Causal Model', 'Ch. 4', '09/22/2020',
+  '2', 'Potential Outcomes: Introduction', 'Ch. 5', '09/29/2020',
+  '3', 'Matching and subclassification', 'Ch. 6', '10/06/2020',
+  '--', 'BREAK', '--', '10/13/2020',
+  '4', 'Instrumental variables', 'Ch. 8', '10/20/2020',
+  '5', 'Dagifying IVs', 'TBD', '10/27/2020',
+  '6', 'Regression Discontinuity Designs', 'Ch. 7', '11/03/2020',
+  '--', 'BREAK - YSI Plenary', '--', '11/10/2020',
+  '--', 'BREAK - YSI Plenary', '--', '11/17/2020',
+  '7', 'Difference-in-differences', 'Ch. 9', '11/24/2020',
+  '8', 'Dagifying DiD', 'TBD', '12/01/2020',
+  '9', 'Front-door criterion: a new research design?', 'TBD', '12/08/2020',
+  '10', 'Conclusion', '--', '12/15/2020'
+) %>%
+  mutate(Time = '19h CET')
+
+schedule %>%
+  knitr::kable() %>%
+  kableExtra::kable_styling() %>%
+  row_spec(2, bold = T, color = "white", background = "red")
+```
+
+# Potential Outcomes
+
+Main reference: 
+
+- Cunningham (2020), ch. 5
+  
+Extra:
+
+- Angrist and Pischke (2009) "Mostly Harmless Econometrics", ch. 2
+
+- Morgan and Winship (2014) "Counterfactuals and causal inference", ch. 2
+  
+## Potential Outcomes - Introduction
+
+A causal effect is defined as a comparison between two states of the world -- **what-if** questions.
+
+In other words, **Counterfactual** questions.
+
+**Potential outcomes** are these states of the world. In the binary case, the potential outcomes are:
+
+1. What would be the **outcome** had D == 1 been observed? (treatment state)
+
+2. What would be the **outcome** had D == 0 been observed? (control state)
+
+Notationally:
+
+$$Y^1_i = \text{PO if unit i received the treatment}$$
+$$Y^0_i = \text{PO if unit i did not receive the treatment}$$
+
+Fundamental problem of Causal Inference:
+
+It is impossible to *observe* the value of $Y^1_i$ and $Y^0_i$ on the same unit and, therefore, it is impossible to *observe* the effect of D == 1 on $i$.
+
+- Holland 1986 "Statistics and Causal Inference".
+
+### Observable outcomes
+
+Observale outcomes, $Y_i$ are distinct from potential outcomes. They are *factual* random variables.
+
+A unit's observable outcome is determined according to the *switching equation*:
+
+\begin{equation}
+\color{black}
+Y_i = D_i Y^1_i + (1 - D_i) Y^0_i
+(\#eq:eq1)
+\end{equation}
+
+### Treatment effect
+
+The treatment effect (or causal effect) is defined as:
+
+\begin{equation*}
+\color{black}
+\delta_i = Y^1_i - Y^0_i
+\end{equation*}
+
+### Average Treatment Effects (ATE)
+
+Is the average treatment effect in the population
+
+\begin{equation*}
+\color{black}
+ATE = E[\delta_i] = E[Y^1_i - Y^0_i] = E[Y^1_i] - E[Y^0_i]
+\end{equation*}
+
+### Averate Treatment effect for the Treated (ATT)
+
+The average treatment effect for only those who received the treatment
+
+
+\begin{align*}
+ATT &= E[\delta_i|D_i = 1] \\
+&= E[Y^1_i - Y^0_i|D_i = 1] \\
+&= E[Y^1_i|D_i=1] - E[Y^0_i|D_i = 1]
+\end{align*}
+
+### Averate Treatment effect for the Untreated/control (ATU/ATC)
+
+The average treatment effect for only those who did not receive the treatment
+
+\begin{align*}
+ATU &= E[\delta_i|D_i = 0] \\
+&= E[Y^1_i - Y^0_i|D_i = 0] \\
+&= E[Y^1_i|D_i=0] - E[Y^0_i|D_i = 0]
+\end{align*}
+
+These quantities cannot be observed. Causal inference try to estimate these effects from data.
+
+### Simple difference in means decomposition
+
+Suppose that we could know the exact potential outcomes of ten patients in a drug trial:
+
+```{r}
+data_patients <- tibble(
+  patient = 1:10,
+  y1 = c(7, 5, 5, 7, 4, 10, 1, 5, 3, 9),
+  y0 = c(1, 6, 1, 8, 2, 1, 10, 6, 7, 8),
+  delta = y1 - y0,
+  d = c(1, 0, 1, 0, 1, 1, 0, 0, 0, 1)
+)
+
+data_patients %>%
+  select(-d) %>%
+  set_names(c('Patients', '$Y^1_i$', '$Y^0_i$', '$\\delta_i$')) %>%
+  kable(escape = F) %>%
+  kable_styling()
+```
+
+```{r}
+ate <- data_patients %>%
+  summarize(patient = 'ATE', y1 = mean(y1), y0 = mean(y0), delta = mean(delta))
+
+att <- data_patients %>%
+  filter(d == 1) %>%
+  summarize(patient = 'ATT', y1 = mean(y1), y0 = mean(y0), delta = mean(delta))
+
+atu <- data_patients %>%
+  filter(d == 0) %>%
+  summarize(patient = 'ATU', y1 = mean(y1), y0 = mean(y0), delta = mean(delta))
+  
+ate  %>%
+  set_names(c('Average', '$Y^1_i$', '$Y^0_i$', '$\\delta_i$')) %>%
+  kable(escape = F) %>%
+  kable_styling()
+```
+
+However, in reality, we would can only observe one outcome for each unit. A real data set could look like the following table:
+
+```{r}
+obs_data <- data_patients %>%
+  mutate(y = if_else(d == 1, y1, y0)) %>%
+  select(patient, y, d) %>%
+  set_names(c('Patients', 'Y', 'D'))
+
+obs_data
+```
+
+One could try to *naively* estimate the ATE from these data using the *simple difference in means (SDO)*:
+
+\begin{equation}
+\color{black}
+SDO = E[Y^1|D=1] - E[Y^0|D=0]
+(\#eq:eq2)
+\end{equation}
+
+In the example above, it would generate the following estimate:
+
+```{r}
+t <- obs_data %>%
+  group_by(D) %>%
+  summarize(Y = mean(Y)) %>%
+  pull(Y)
+
+cat('SDO = ', diff(t))
+```
+
+Which is far from the true $0.6$ ATE we saw before.
+
+In observation studies, this quantity will be most likely a biased estimate of the ATE. It includes the ATE but its effect is confounded by *selection bias* and *heterogeneous treatment effects* bias.
+
+Formally (proof in Cunningham, p. 90):
+
+\begin{align*}
+\sum (y_i|d_i = 1) - \sum(y_i|d_i=0) &= \underbrace{E[Y^1] - E[Y^0]}_\text{ATE} \\
+&+ \underbrace{E[Y^0|D=1] - E[Y^0|D=0]}_\text{Selection Bias} \\
+& \underbrace{(1-\pi)(ATT - ATU)}_\text{Heterogeneous Treatment Effects}
+\end{align*}
+
+In the example, the bias is obvious. The main problem is that the *potential outcomes are not independent (ex-ante) of the selection to treatment*. In fact, if we go back and take a look at the table, we will see that the treatment assignment was intentionally connected to the potential outcomes.
+
+## Randomization
+
+- Randomization is the most credible way of using the SDO to estimate ATE.
+
+Why?
+
+Because it enforces by design that, even if half of the potential outcomes are not observed, the difference between the observed **means** in the treatment and control group will converge to the difference of the population averages (Pearl et. al, 2016, p. 105). Notationally:
+
+\begin{equation*}
+\color{black}
+(Y^1, Y^0) \perp\!\!\!\perp D
+\end{equation*}
+
+Which means that:
+
+\begin{equation}
+\color{black}
+E[Y^1|D=1] = E[Y^1|D=0]
+(\#eq:eq3)
+\end{equation}
+
+\begin{equation}
+\color{black}
+E[Y^0|D=1] = E[Y^0|D=0]
+(\#eq:eq4)
+\end{equation}
+
+These equality makes the selection bias and the heterogeneous treatment effects bias equal to zero:
+
+\begin{align*}
+SB &= E[Y^0|D=1] - E[Y^0|D=0] \\
+&= E[Y^0|D=1] - E[Y^0|D=1] \\
+&= 0
+\end{align*}
+
+\begin{align*}
+HTE &= (1-\pi) \cdot (ATT - ATU) \\
+\dots \\
+ATT - ATU &= E[Y^1|D=1] - E[Y^0|D=1] - (E[Y^1|D=0] - E[Y^0|D=0]) \\
+&= E[Y^1|D=1] - E[Y^0|D=1] - E[Y^1|D=0] + E[Y^0|D=0] \\
+&= E[Y^1|D=1] - E[Y^1|D=1] + E[Y^0|D=1] - E[Y^0|D=1] \\
+&= 0
+\end{align*}
+
+Using the equalities generated by equations \@ref(eq:eq3) and \@ref(eq:eq4).
+
+Hence, under randomization, the expected SDO converges to the ATE.
+
+```{r, echo = T}
+# Seeing is believing
+set.seed(1234)
+monte_carlo <- rerun(.n = 10000, {
+  # Get random order of rows from data_patients
+  rows <- sample(nrow(data_patients))
+  # Shuffle the data
+  DT <- data.table(data_patients[rows, ])
+  # Assign the first five to treatment and the last five to control
+  DT[, 'd'] <- c(rep(1, 5), rep(0, 5))
+  # Get the observed outcomes with the switching equation
+  DT <- DT[, y := d*y1 + (1-d)*y0][]
+  # Get average value of Y by groups 'd'
+  DT <- DT[, by = d, .(y = mean(y))]
+  # Get SDOs
+  data.table(sd0 = DT$y[2], sd1 = DT$y[1], sdo = DT$y[1] - DT$y[2])
+})
+# Bind all generated rows
+monte_carlo1 <- rbindlist(monte_carlo)
+# Get average value
+avg_sdo <- pull(monte_carlo1[, .(sdo = mean(sdo))])
+```
+
+```{r}
+cat('Average SDO = ', avg_sdo)
+```
+
+## SUTVA (Stable Unit Treatment Value Assumption)
+
+The potential outcomes model depends on a strong assumption: SUTVA
+
+- The potential outcomes of individuals must be unnafected by changes in treatment exposures of all other individuals
+
+- In other words, there is no macro (or externalities) effect.
+
+## STAR example
+
+Enough of theory, it is time to dagify!
+
+The Student/Teacher Achievement Ratio (STAR) study tried to measure the average causal effect of class size on student achievement. 
+
+Before this study, many observation studies presented little to no evidence of a significant effect of class size on student achievement.
+
+However, some argued that weaker students are often deliberately placed into smaller groups. Therefore, the effect of class size on achievement could be confounded by the unobservable ability of students.
+
+In a DAG:
+
+```{r}
+star1 <- dagify(
+  x ~ a,
+  y ~ x, y ~ a,
+  coords = tribble(
+    ~name, ~x, ~y,
+    'x', 1, 1,
+    'y', 3, 1,
+    'a', 2, 2 
+  ),
+  labels = c('a' = 'Ability', 'y' = 'Achievement', 'x' = 'Class Size'),
+  latent = 'a',
+  exposure = 'x',
+  outcome = 'y'
+)
+
+star1 %>%
+  tidy_dagitty() %>%
+  ggplot(aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_dag_point(
+    data = function(x) filter(x, (name == "a")),
+    shape = 1) +
+  geom_dag_point(
+    data = function(x) filter(x, (name != "a")),
+    shape = 16) +
+  geom_dag_edges(
+    data_directed = function(x) filter(x, (name == 'a')),
+    edge_linetype = 'dashed'
+  ) +
+  geom_dag_edges(
+    data_directed = function(x) filter(x, (name != 'a'))
+  ) +
+  geom_dag_label_repel(aes(label = label)) +
+  theme_dag()
+```
+
+After randomization:
+
+```{r}
+star2 <- dagify(
+  x ~ r,
+  y ~ x, y ~ a,
+  coords = tribble(
+    ~name, ~x, ~y,
+    'x', 1, 1,
+    'y', 3, 1,
+    'a', 2, 2,
+    'r', 1, 1.5
+  ),
+  labels = c('a' = 'Ability', 'y' = 'Achievement', 'x' = 'Class Size', 'r' = 'Random assignment'),
+  latent = 'a',
+  exposure = 'x',
+  outcome = 'y'
+)
+
+
+ggplot(star2, aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_dag_point(
+    data = function(x) filter(x, (name == "a")),
+    shape = 1) +
+  geom_dag_point(
+    data = function(x) filter(x, (name != "a")),
+    shape = 16) +
+  geom_dag_edges(
+    data_directed = function(x) filter(x, (name == 'a')),
+    edge_linetype = 'dashed'
+  ) +
+  geom_dag_edges(
+    data_directed = function(x) filter(x, (name != 'a'))
+  ) +
+  geom_dag_label_repel(aes(label = label)) +
+  theme_dag()
+```
+
+That's the idea.
+
+But, in the STAR case, there was, in fact, a conditional randomization, as class size was randomized inside schools but different schools had non-random proportions of class sizes. Other control variables were also used to increase precision. They were: gender, free lunch (proxy of income), race, teacher experience, etc. The full DAG:
+
+```{r}
+star3 <- dagify(
+  x ~ a, x ~ s,
+  y ~ x, y ~ a, y ~ s, y ~ c,
+  s ~ c,
+  a ~ c,
+  coords = tribble(
+    ~name, ~x, ~y,
+    'x', 1, 1,
+    'y', 3, 1,
+    'a', 2, 2,
+    's', 2, 0,
+    'c', 4, 1
+  ),
+  labels = c('a' = 'Ability', 'y' = 'Achievement', 'x' = 'Class Size',
+             's' = 'School', 'c' = 'Controls'),
+  latent = 'a',
+  exposure = 'x',
+  outcome = 'y'
+)
+
+star3 %>%
+  tidy_dagitty() %>%
+  ggplot(aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_dag_point(
+    data = function(x) filter(x, (name == "a")),
+    shape = 1) +
+  geom_dag_point(
+    data = function(x) filter(x, (name != "a")),
+    shape = 16) +
+  geom_dag_edges(
+    data_directed = function(x) filter(x, (name == 'a')),
+    edge_linetype = 'dashed'
+  ) +
+  geom_dag_edges(
+    data_directed = function(x) filter(x, (name != 'a'))
+  ) +
+  geom_dag_text(
+    data = function(x) filter(x, (name == "a")),
+    color = 'black') +
+  geom_dag_text(
+    data = function(x) filter(x, (name != "a")),
+    color = 'white') +
+  geom_dag_label_repel(aes(label = label)) +
+  theme_dag()
+```
+
+There are many backdoor paths between `Class Size` and `Achievement`. They are:
+
+\begin{align*}
+1 &= x \leftarrow a \rightarrow y \\
+2 &= x \leftarrow a \leftarrow c \rightarrow y \\
+3 &= x \leftarrow a \leftarrow c \rightarrow s \rightarrow y \\
+4 &= x \leftarrow s \rightarrow y \\
+5 &= x \leftarrow s \leftarrow \rightarrow y \\
+6 &= x \leftarrow s \leftarrow c \rightarrow s \rightarrow y
+\end{align*}
+
+${a, s}$ is a minimal sufficient set to block all backdoor paths in this DAG. Unfortunately, `Ability` is unobserved. 
+
+The modified DAG after randomiziation look like:
+
+```{r}
+star4 <- dagify(
+  x ~ r, x ~ s,
+  y ~ x, y ~ a, y ~ s, y ~ c,
+  s ~ c,
+  a ~ c,
+  coords = tribble(
+    ~name, ~x, ~y,
+    'x', 1, 1,
+    'y', 3, 1,
+    'a', 2, 2,
+    's', 2, 0,
+    'c', 4, 1,
+    'r', 1, 1.8
+  ),
+  labels = c('a' = 'Ability', 'y' = 'Achievement', 'x' = 'Class Size',
+             's' = 'School', 'c' = 'Controls', 'r' = 'Random Assignment'),
+  latent = 'a',
+  exposure = 'x',
+  outcome = 'y'
+)
+
+star4 %>%
+  tidy_dagitty() %>%
+  ggplot(aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_dag_point(
+    data = function(x) filter(x, (name == "a")),
+    shape = 1) +
+  geom_dag_point(
+    data = function(x) filter(x, (name != "a")),
+    shape = 16) +
+  geom_dag_edges(
+    data_directed = function(x) filter(x, (name == 'a')),
+    edge_linetype = 'dashed'
+  ) +
+  geom_dag_edges(
+    data_directed = function(x) filter(x, (name != 'a'))
+  ) +
+  geom_dag_text(
+    data = function(x) filter(x, (name == "a")),
+    color = 'black') +
+  geom_dag_text(
+    data = function(x) filter(x, (name != "a")),
+    color = 'white') +
+  geom_dag_label_repel(aes(label = label)) +
+  theme_dag()
+```
+
+```{r}
+star4 %>%
+  ggdag_drelationship("x", "y", controlling_for = "s")
+```
+
+
