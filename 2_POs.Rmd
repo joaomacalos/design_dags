@@ -320,7 +320,7 @@ However, some argued that weaker students are often deliberately placed into sma
 
 In a DAG:
 
-```{r}
+```{r star1}
 star1 <- dagify(
   x ~ a,
   y ~ x, y ~ a,
@@ -358,7 +358,7 @@ star1 %>%
 
 After randomization:
 
-```{r}
+```{r star2}
 star2 <- dagify(
   x ~ r,
   y ~ x, y ~ a,
@@ -398,7 +398,7 @@ That's the idea.
 
 But, in the STAR case, there was, in fact, a conditional randomization, as class size was randomized inside schools but different schools had non-random proportions of class sizes. Other control variables were also used to increase precision. They were: gender, free lunch (proxy of income), race, teacher experience, etc. The full DAG:
 
-```{r}
+```{r star3}
 star3 <- dagify(
   x ~ a, x ~ s,
   y ~ x, y ~ a, y ~ s, y ~ c,
@@ -460,7 +460,7 @@ ${a, s}$ is a minimal sufficient set to block all backdoor paths in this DAG. Un
 
 The modified DAG after randomiziation look like:
 
-```{r}
+```{r star4}
 star4 <- dagify(
   x ~ r, x ~ s,
   y ~ x, y ~ a, y ~ s, y ~ c,
@@ -508,7 +508,7 @@ star4 %>%
   theme_dag()
 ```
 
-```{r}
+```{r star5}
 star4 %>%
   ggdag_drelationship("x", "y", controlling_for = "s")
 ```

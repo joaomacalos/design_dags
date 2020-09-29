@@ -1202,11 +1202,11 @@ could be confounded by the unobservable ability of students.
 
 In a DAG:
 
-![](Figs/unnamed-chunk-9-1.png)<!-- -->
+![](Figs/star1-1.png)<!-- -->
 
 After randomization:
 
-![](Figs/unnamed-chunk-10-1.png)<!-- -->
+![](Figs/star2-1.png)<!-- -->
 
 That’s the idea.
 
@@ -1216,7 +1216,7 @@ non-random proportions of class sizes. Other control variables were also
 used to increase precision. They were: gender, free lunch (proxy of
 income), race, teacher experience, etc. The full DAG:
 
-![](Figs/unnamed-chunk-11-1.png)<!-- -->
+![](Figs/star3-1.png)<!-- -->
 
 There are many backdoor paths between `Class Size` and `Achievement`.
 They are:
@@ -1244,6 +1244,6 @@ Unfortunately, `Ability` is unobserved.
 
 The modified DAG after randomiziation look like:
 
-![](Figs/unnamed-chunk-12-1.png)<!-- -->
+![](Figs/star4-1.png)<!-- -->
 
-![](Figs/unnamed-chunk-13-1.png)<!-- -->
+![](Figs/star5-1.png)<!-- -->
