@@ -1,0 +1,831 @@
+---
+title: "3. Subclassification and matching"
+author: "João Pedro S. Macalós"
+
+date: "10/5/2020"
+output:
+  bookdown::github_document2:
+    pandoc_args: --webtex
+css: mycss.css
+always_allow_html: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(#echo = TRUE,
+                      echo=FALSE, 
+                      fig.width=6.5, fig.height=4, fig.path='Figs/',
+                      warning=FALSE, message=FALSE,
+                      dev.args = list(png = list(type = "cairo")))
+```
+
+
+```{r}
+library(MASS)
+library(tidyverse)
+library(ggpubr)
+library(ggdag)
+theme_set(theme_dag())
+library(dagitty)
+library(knitr)
+library(kableExtra)
+library(broom)
+```
+
+Schedule:
+
+```{r}
+library(kableExtra)
+
+schedule <- tribble(
+  ~N, ~Session, ~Reading, ~Date,
+  '1', 'DAGs and the Structural Causal Model', 'Ch. 4', '09/22/2020',
+  '2', 'Potential Outcomes: Introduction', 'Ch. 5', '09/29/2020',
+  '3', 'Matching and subclassification', 'Ch. 6', '10/06/2020',
+  '--', 'BREAK', '--', '10/13/2020',
+  '4', 'Instrumental variables', 'Ch. 8', '10/20/2020',
+  '', 'https://ysi.ineteconomics.org/project/5f4258a9689c756fb5ddb637/event/5f797f72a21037043d13e072', '', '',
+  '5', 'Dagifying IVs', 'TBD', '10/27/2020',
+  '6', 'Regression Discontinuity Designs', 'Ch. 7', '11/03/2020',
+  '--', 'BREAK - YSI Plenary', '--', '11/10/2020',
+  '--', 'BREAK - YSI Plenary', '--', '11/17/2020',
+  '7', 'Difference-in-differences', 'Ch. 9', '11/24/2020',
+  '8', 'Dagifying DiD', 'TBD', '12/01/2020',
+  '9', 'Front-door criterion: a new research design?', 'TBD', '12/08/2020',
+  '10', 'Conclusion', '--', '12/15/2020'
+)
+
+schedule %>%
+  knitr::kable() %>%
+  kableExtra::kable_styling() %>%
+  row_spec(3, bold = T, color = "white", background = "red") %>%
+  row_spec(6, font_size = 11)
+```
+
+# Subclassification, Matching, and Propensity Scores
+References:
+
+- Cunningham 2020, ch. 6
+
+- Angrist and Pischke, p. 69-91
+
+- Morgan and Winship. ch. 5
+
+- Matheus Facure github page: https://github.com/matheusfacure/python-causality-handbook
+
+## Subclassification
+
+Subclassification, as all methods studied in this chapter, is a method designed to control for observable confounders. In other words, the objective of subclassification is to close open observed backdoor paths.
+
+In subclassification, we compare the difference in outcomes between treated and untreated in every subgroup of the covariates. The ATE is a weighted average of these comparisons. 
+
+Mathematically (in the case of discrete covariates):
+
+\begin{equation*}
+\color{black}
+\hat{ATE} = \sum_{i=0}^K (\overline{Y_{k1}} - \overline{Y_{k0}}) \cdot \frac{N_k}{N}
+\end{equation*}
+
+
+### Titanic example
+
+
+Load the data using `mixtape` package:
+```{r, echo = T}
+titanic <- mixtape::titanic
+```
+
+Check the structure of the data:
+```{r, echo = T}
+glimpse(titanic)
+```
+
+The question of interest here is: did first class passengers disproportionately survived the Titanic accident? 
+
+We suspect that this hypothesis is true. However, we also noted that **women** and **children**, who should have being prioritized to take a place in the emergency boats, appear disproportionately among first class passengers.
+
+The Titanic DAG:
+```{r titanic-dag1, fig.width=9}
+dag_tit <- dagify(y ~ d, y ~ w, y ~ c,
+                  d ~ w, d ~ c,
+                  coords = tribble(
+                    ~name, ~x, ~y,
+                    'y', 3, 2,
+                    'd', 1.5, 2,
+                    'w', 1, 3,
+                    'c', 1, 1
+                  ),
+                  labels = c('y' = 'Survival', 'd' = 'First Class', 'w' = 'Women', 'c' = 'Children'))
+
+dag_tit1 <- dag_tit %>%
+  #tidy_dagitty() %>%
+  #ggplot(aes(x = x, y = y, xend = xend, yend = yend)) +
+  #geom_dag_point() +
+  #geom_dag_edges() +
+  #geom_dag_label_repel(aes(label = label)) +
+  ggdag(use_labels = 'label', text = F) +
+  labs(title = 'DAG')
+
+dag_tit2 <- dag_tit %>%
+  ggdag_paths('y', 'd', adjust_for = c('w', 'c'), use_labels = 'label', text = F, shadow = T) +
+  labs(subtitle = 'Open paths after controlling \nfor Women and Children')
+
+ggarrange(dag_tit1, dag_tit2, ncol = 2)
+```
+Now let's analyze these data.
+
+First: calculate NAIVE ATE:
+
+```{r}
+# Transform class into binary
+titanic <- titanic %>%
+  mutate(class = if_else(class == 1, 1, 0)) 
+
+ate_titanic <- titanic %>%
+  group_by(class) %>%
+  summarize(survived = mean(survived)) %>%
+  summarize(naive_ate = diff(survived))
+
+cat('Naive ATE: ', ate_titanic$naive_ate)
+```
+
+
+```{r, echo = T}
+# 1. Calculate the ATE in each substrata
+
+ate_in_strata <- titanic %>%
+  # 1. Stratify the data into four groups
+  group_by(age, sex, class) %>%
+  summarize(survived = mean(survived)) %>%
+  # 2. Calculate the difference in survival probabilities for each group
+  group_by(age, sex) %>%
+  summarize(survived = diff(survived))
+
+ate_in_strata
+
+# 3. Calculate weights for each strata:
+strata_weights <- titanic %>%
+  group_by(age, sex, class) %>%
+  summarize(n = n()) %>%
+  filter(class == 0) %>%
+  mutate(n = n/nrow(titanic)) %>%
+  select(age, sex, weight = n)
+
+# 4. Calculate the ATE:
+ate_wt_titanic <- left_join(ate_in_strata, strata_weights) %>%
+  ungroup %>%
+  mutate(weighted_survived = survived * weight) %>%
+  summarize(weighted_ate = sum(weighted_survived))
+
+cat('Weighted ATE: ', ate_wt_titanic$weighted_ate)
+```
+
+
+## Matching
+
+The idea of matching is to find a group of observations among the untreated in which the relevant covariates (the ones that block all backdoor paths) are exactly the same or similar to the covariates observed in the treated group. These units are then used as counterfactuals against the observed treated values.
+
+### Exact matching
+
+As the name says, in exact matching, the idea is to find observations in the control group that exactly matches the covariates observed in the treated group.
+
+Mathematically:
+
+\begin{equation*}
+\color{black}
+\hat{\delta_{ATT}} = \frac{1}{N_T} \sum_{D_i=1} (Y_i - [\frac{1}{M} \sum_{m=1}^M Y_{jm0}])
+\end{equation*}
+
+This is best explained with an example:
+
+```{r}
+training <- read_csv('https://raw.githubusercontent.com/johnson-shuffle/mixtape-code/master/ch06/training_example.csv') %>%
+  mutate(unit = 1:30)
+```
+
+```{r}
+t_tb1 <- training[1:15,]
+t_tb2 <- training[16:30,]
+
+kable(t_tb1) %>%
+  kable_styling(full_width = F, font_size = 12, position = 'float_left')
+kable(t_tb2) %>%
+  kable_styling(full_width = F, font_size = 12, position = 'left')
+```
+
+In this example, we have a dataset on future earnings of participants and non-participants of a trainee program, together with information on their age. The hypothesis here is that **age** might be a confounder in the relationship between **trainee** and **earnings**, for older people tend to have higher earnings.
+
+```{r dag-trainee}
+dag_trainee <- dagify(y ~ x, y ~ a,
+                      x ~  a,
+                      coords = tribble(
+                        ~name, ~x, ~y,
+                        'y', 3, 1,
+                        'x', 1, 1,
+                        'a', 2, 2
+                      ),
+                      labels = c('y' = 'Earnings', 'x' = 'Trainee', 'a' = 'Age'))
+
+ggdag(dag_trainee, use_labels = 'label', text = F) +
+  theme_dag()
+
+```
+
+In this example, what do you think is the quantity of interest? ATE, ATT, or ATC?
+
+If we are interested in calculating the ATE, we need to match values on both sides (treatment and control), as no cell can be left empty. The ATT is simpler to calculate, as we only need data that matches the observed values on the treatment group.
+
+We can summarize the data to check for balance on **age** and on **earnings**:
+```{r}
+training %>%
+  group_by(trainee) %>%
+  summarize(age = mean(age), earnings = mean(earnings))
+```
+
+As we can see, the **trainee** group is significantly younger, and receive less on average than the non-trainee group. The Naive ATE is:
+```{r}
+naive_ate <- mean(training$earnings[training$trainee == 1]) - mean(training$earnings[training$trainee == 0])
+
+cat('Naive ATE: ', naive_ate)
+```
+
+```{r train-hist1, include=F}
+training %>%
+  ggplot(aes(x = age)) +
+  geom_histogram(color = 'white', binwidth = 1) +
+  facet_wrap(~trainee, scales = 'free_x') +
+  theme_bw()
+```
+
+The exact matching strategy consists of four steps:
+
+1. Save the age (the covariate) of the units in the treated group;
+
+2. Filter the untreated group to keep only those units which values exactly match those on the treated group. If more than one unit matches, we take the average value between these units to use as a counterfactual:
+
+3. Match the datasets;
+
+4. Calculate the ATT:
+
+```{r, echo = T}
+# 1. Save age
+age_trainee <- training %>%
+  filter(trainee == 1) %>%
+  pull(age)
+
+
+# 2. Filter non-trainee group
+matched_trainee <- training %>%
+  filter(trainee == 0) %>%
+  filter(age %in% age_trainee) %>%
+  group_by(age) %>%
+  summarize(matched_earnings = mean(earnings),
+            funit = first(unit),
+            lunit = last(unit)) %>%
+  mutate(matched_unit = if_else(funit == lunit, as.character(funit), str_c(funit, ', ', lunit))) %>%
+  select(-c(funit, lunit))
+
+# 3. Match the datasets
+matched_training <- training %>%
+  filter(trainee == 1) %>%
+  left_join(matched_trainee) %>%
+  select(unit, matched_unit, earnings, matched_earnings)
+
+kable(matched_training) %>%
+  kable_styling(font_size = 12, full_width = F)
+
+# 4. Calculate the ATT
+att_training <- mean(matched_training$earnings) - mean(matched_training$matched_earnings)
+cat('ATT: ', att_training)
+```
+
+### Approximate matching and bias-correcting 
+
+The problem with exact matching is that, in most of the cases, there won't be units on the control group that precisely match the units on the treatment group apart from treatment status.
+
+A common solution for matching, in these cases, is the utilization of **approximate** matching. Approximate matching relies in some measure of distance, as it will find the units in the control group that are closer to the units in the treatment group.
+
+There are many different measures of distance. Examples are: Euclidean distance, normalized Euclidean distance, Mahalanobis Distance, Gower's distance. It is also common to use **propensity scores** as a measure of distance.
+
+Within approximate matching, it is commonly used the method of matching on the **K-Near-Neighbors**, where the researcher define how many of the closest neighbors should be matched. If more than one neighbor is selected, then their values should be averaged out to form a counterfactual to the treatment units.
+
+However, the utilization of approximate matching will invariably lead to bias. Further, this bias will be larger, the larger is the discrepancy between the observed covariates in the treatment units and on the selected matched control variables. Luckily, there are methods to correct for this bias, as explained in Cunningham's book.
+
+#### Example of approximate matching and bias-correcting
+
+I took this dataset from Matheus Facure page, as I think it is useful to compare my results with his to check my code.
+
+In this example, we want to check whether a hypothetical medicine increases or decreases the days until recovery of a cohort of patients. However, we suspect that elderly, male, and with more severe symptoms patients are more likely to take the medicine and less likely to recover faster from the disease.
+
+These hypotheses are better presented in a DAG:
+
+```{r dag-med1}
+dag_med <- dagify(y ~ m, y ~ s, y ~ a, y ~ g,
+                  m ~ a, m ~ s, m ~ g,
+                  coords = tribble(
+                    ~name, ~x, ~y,
+                    'm', 1, 1,
+                    'a', 1, 2,
+                    's', 2, 2,
+                    'y', 3, 1,
+                    'g', 3, 2
+                  ),
+                  labels = c('y' = 'Recovery', 'm' = 'Treatment', 's' = 'Severity', 'a' = 'Age', 'g' = 'Gender'))
+
+dag_med1 <- ggdag(dag_med, use_labels = 'label', text = F)
+dag_med1
+```
+
+In this example, we will use approximate matching to control for **Age** and **Severity**:
+
+```{r dag-med2}
+dag_med2 <- dag_med %>%
+  ggdag_paths('y', 'm', adjust_for = c('a', 's', 'g'), use_labels = 'label', text = F, shadow = T) +
+  theme(legend.position = 'bottom',
+        strip.background = element_blank(),
+        strip.text.x = element_blank(),
+        legend.title = element_blank())
+
+dag_med2
+```
+
+We first load the dataset:
+```{r, echo = T}
+medicine <- read_csv('Datasets/medication_matching.csv') %>%
+  rename(male = sex)
+```
+
+And check the balance of the variables on each subgroup:
+```{r}
+med_sum1 <- medicine %>%
+  summarize(across(c(male, age, severity), ~mean(.x))) %>%
+  mutate(treatment = 'Whole dataset') %>%
+  select(treatment, everything())
+
+med_sum2 <- medicine %>%
+  group_by(treatment) %>%
+  summarize(across(c(male, age, severity), ~mean(.x))) %>%
+  mutate(treatment = as.character(treatment))
+
+kable(bind_rows(med_sum1, med_sum2)) %>%
+  kable_styling()
+```
+
+The naive ATE in this example is:
+```{r, echo = T}
+naive_ate <- mean(medicine$recovery[medicine$treatment==1]) - mean(medicine$recovery[medicine$treatment==0]) 
+cat('Naive ATE: ', naive_ate)
+```
+Is the treatment really harmful to the patients, increasing the days to their recovery? Or is this estimator confounded?
+
+In this example, we will try to figure it out by using subset of the control units that most approximately matches the characteristics observed in the treatment group as a counterfactual group.
+
+To use approximate matching, however, it is important to take a distance measure that is invariant to scale, or to rescale the variables prior to finding the nearest matches. In this example, I will rescale the variables according to the following formula:
+
+\begin{equation*}
+\color{black}
+\widetilde{X} = \frac{X - \overline{X}}{sd(X)} \text{ where } \widetilde{X} \text{ is the rescaled variables}
+\end{equation*}
+
+```{r, echo = T}
+medicine <- medicine %>%
+  mutate(across(c(male, age, severity), ~(.x - mean(.x)) / sd(.x)))
+```
+
+We then use these rescaled variables to find the nearest match for each variable in our treatment group.
+
+We will start with the `class` package. This package use the *Euclidean* distance by default. We supply the X values (age, male, and seveirty) of the untreated units as `train` data, the X values of the treated units as `test` data. The Y (recovery) values of the untreated units is supplied as `cl`, the classification or target value. This algorithm will supply the Y values of the closest match for each unit in the treatment group.
+
+Remember: in this example, we are only looking for matches for the treatment units. Hence, we are calculating the Average Treatment Effects on the Treated (ATT). The matching estimator formula is the following:
+
+\begin{equation*}
+\color{black}
+\hat{ATT} = \frac{1}{N_T}\sum_{i=1}^{N_T} (Y_i - Y_{jm(i)})
+\end{equation*}
+
+
+
+```{r, echo = T}
+library(class)
+
+treated <- filter(medicine, treatment == 1)
+untreated <- filter(medicine, treatment == 0)
+
+X <- c('age', 'male', 'severity')
+y <- 'recovery' 
+
+mt_y0 <- knn(train = as.matrix(untreated[, X]), 
+                  test = as.matrix(treated[, X]),
+                  cl = as.matrix(untreated[, y]), 
+                  k=1)
+
+# The output is a factor variable, so we should convert it to character and then to numeric to preserve the values
+mt_y0 <- as.numeric(as.character(mt_y0))
+
+matched_dt <- treated %>%
+  mutate(match = mt_y0)
+
+matched_att <- mean(matched_dt$recovery) - mean(matched_dt$match)
+cat('Matched ATT: ', matched_att)
+
+# If we wanted to calculate the
+
+```
+
+
+If, however, we wanted to calculate the ATE, we would need to find matches for both groups. The estimator formula is:
+
+\begin{equation*}
+\color{black}
+\hat{ATE} = \frac{1}{N}\sum_{i=1}^N (2D_i - 1) \cdot (Y_i - Y_{jm(i)})
+\end{equation*}
+
+```{r, echo = T}
+mt_y1 <- knn(
+  train = as.matrix(treated[, X]), 
+  test = as.matrix(untreated[, X]),
+  cl = as.matrix(treated[, y]), 
+  k=1
+)
+
+mt_y1 <- as.numeric(as.character(mt_y1))
+
+matched_dtc <- untreated %>%
+  mutate(match = mt_y1)
+
+# Combine the two matched datasets
+matched_dt_ate <- bind_rows(matched_dt, matched_dtc)
+
+matched_ate <- mean((2 * matched_dt_ate$treatment - 1) * (matched_dt_ate$recovery - matched_dt_ate$match))
+cat('Matched ATE: ', matched_ate)
+```
+#### Bias correction
+
+The problem with approximate matching is that its estimator will be biased. The bigger the discrepancies, the higher will be the bias. Fortunately, it is possible to correct for this bias. For a complete description of the formulae and proofs, the reader should check pages 127-132 of Cunningham's Mixtape (2020). 
+
+Here, I will just provide an intuition. This bias can be corrected by adjusting the difference between the observed $Y_i$ values and the observed $Y_j$ values by what would be the expected values of $Y$ for these units without any knowledge on the treatment. These expected values can be obtained by regressing the values of $Y$ on the covariates $X$.
+
+Let's check how to do it in R:
+
+```{r, echo = T}
+library(FNN)
+
+# 1. Get the index of the nearest neighbors units to extract from untreated
+index_knn <- get.knnx(untreated[, X],
+                      treated[, X],
+                      k=1)
+
+# 2. Extract these units from untreated dataset
+untreated_match <- untreated %>%
+  slice(index_knn[[1]])
+
+# 3. Regress y ~ X on the untreated units
+reg_bcu <- lm(recovery ~ male + age + severity, data = untreated_match)
+
+# 4. Augment the treated dataset with
+treated_augmented <- treated %>% 
+  mutate(
+    # The matched data
+    match = untreated_match$recovery,
+    
+    # The fitted treated values using the reg_bcu estimates to predict
+    fitted = predict(reg_bcu, newdata = treated),
+    
+    # The fitted untreated values using the reg_bcu estimates to predict
+    fitted_match = predict(reg_bcu)
+    )
+
+# 5. Calculate the according to the formula
+bias_corrected_att <- treated_augmented %>%
+  mutate(att = recovery - match - (fitted - fitted_match)) %>%
+  summarize(att = mean(att)) %>%
+  pull(att)
+
+cat('Bias Corrected ATT: ', bias_corrected_att)
+
+```
+To find the ATE:
+
+```{r, echo = T}
+index_knnu <- get.knnx(treated[, X],
+                      untreated[, X],
+                      k=1)
+
+treated_match <- treated %>% slice(index_knnu[[1]])
+
+reg_bct <- lm(recovery ~ male + age + severity, data = treated_match)
+
+untreated_augmented <- untreated %>% 
+  mutate(
+    # The matched data
+    match = treated_match$recovery,
+    
+    # The fitted treated values using the reg_bcu estimates to predict
+    fitted = predict(reg_bct, newdata = untreated),
+    
+    # The fitted untreated values using the reg_bcu estimates to predict
+    fitted_match = predict(reg_bct)
+    )
+
+bias_corrected_atc <- untreated_augmented %>%
+  mutate(atc = match - recovery - (fitted_match - fitted)) %>%
+  summarize(atc = mean(atc)) %>%
+  pull(atc)
+
+cat('Bias Corrected ATC: ', bias_corrected_atc)
+
+med_augmented <- bind_rows(treated_augmented, untreated_augmented)
+
+bias_corrected_ate <- med_augmented %>%
+  mutate(ate = (2*treatment - 1)*(recovery - match - (fitted - fitted_match))) %>%
+  summarize(ate = mean(ate)) %>%
+  pull(ate)
+
+cat('Bias Corrected ATE: ', bias_corrected_ate)
+
+# A curious mind can also check that the bias corrected ATE is the weighted average of the ATT and ATC:
+# bias_corrected_atc * (nrow(untreated)/nrow(medicine)) + bias_corrected_att * (nrow(treated)/nrow(medicine))
+```
+
+Hence we hard-coded the estimations of bias-corrected ATT, ATC, and ATE for the medicine dataset. However, we still need some measure of the standard errors. Calculating them is prone to errors and outside the scope of this notebook.
+
+The following piece of code uses the package `Matching`. This package automates the whole analysis:
+
+
+```{r, echo = T}
+library(Matching)
+
+att_med <- Match(
+  Y=medicine$recovery, 
+  Tr=medicine$treatment,
+  X=medicine[,X],
+  Z=medicine[,X],
+  estimand='ATT',
+  M=1,
+  BiasAdjust = T
+  )
+
+summary(att_med)
+
+```
+
+
+### Coarsened exact matching
+
+The idea with coarsened exact matching is to discretize the covariates, based on background knowledge and theoretical claims, in order to fill the bins with units that can be used in exact matching.
+
+# Propensity Score methods
+
+The idea of propensity scores is to compare units who have similar probabilities of being treated, given a set of covariates $X$.
+
+According to Cunningham,
+
+>If, conditional on X, two units have the same probability of being treated, then we say that they have similar *propensity scores*. If two units have the same propensity score, but one is in the treatment group and the other is not, and the *conditional independence assumption* (CIA) credibly holds in the data, then differences between their observed outcomes are attributable to the treatment. CIA in this context means that the assignment of treatment, conditional on the propensity score, is independent of potential outcomes, or 'as good as random.'
+
+There are two identifying assumptions for propensity score methods:
+
+1. Conditional independence assumption
+
+2. Common support
+
+The latter means that, for any probability, there must be units in both the treatment and in the control group.
+
+An important derivation of propensity scores is that, if
+
+\begin{equation*}
+\color{black}
+(Y^1, Y^0) \perp\!\!\!\perp D|X \text{ (CIA)}
+\end{equation*}
+
+then
+
+\begin{equation*}
+\color{black}
+(Y^1, Y^0) \perp\!\!\!\perp D|p(X)
+\end{equation*}
+
+This is the **propensity score theorem**. Its importance is that it is just a scalar, so it reduces the dimensionality problem common to matching methods.
+
+In a DAG:
+
+```{r dag-ps1}
+dag_ps <- dagify(Y ~ X, Y ~ D,
+                 D ~ PS,
+                 PS ~ X,
+                 coords = tribble(
+                   ~name, ~x, ~y,
+                   'Y', 2.5, 3,
+                   'X', 3, 1,
+                   'PS', 2, 2,
+                   'D', 1, 3
+                 ))
+
+ggdag(dag_ps) + theme_dag()
+```
+
+Steiner et al (2017) propose a different DAG to understand the propensity score methods:
+
+```{r dag-ps2}
+dag_ps2 <- dagify(Y ~ X, Y ~ D,
+                 D ~ X,
+                 PS ~ X, PS ~ D,
+                 coords = tribble(
+                   ~name, ~x, ~y,
+                   'Y', 2.5, 3,
+                   'X', 3, 1,
+                   'PS', 1.3, 1.5,
+                   'D', 1, 3
+                 ))
+
+ggdag(dag_ps2) + theme_dag()
+```
+
+In their DAG, the propensity score is a collider. When it is conditioned, it exactly cancels the $D \leftarrow X$ path, uncounfounding the $D \rightarrow
+Y$ relationship.
+
+
+Propensity score methods are either used to scale the observations or to select a subset of the control units that match the treatment units on their propensity scores.
+
+In both cases, the first step is to
+
+- Estimate the propensity scores, usually with a logistic regression.
+
+To estimate the propensity scores, you define the treatment assignment as the dependent variable and the covariates that block the backdoor path as the independent variables.
+
+If you decide to weight the observations by their propensity score, you are in the field of **inverse probability weighting**. Usually the units with very low or very high propensity scores are trimmed out.
+
+It is important to be careful here that, when trimming out observations, you might affect the quantities of interest. If some of the treatment units are excluded, the estimated quantity is a subset of the ATT.
+
+Finally, propensity scores are also used to subset the control units based on matching of similar propensity scores.
+
+### Dehejia and Wahba 2002 example
+
+We start by loading the dataset from the NBER page and checking its structure:
+```{r, echo = T}
+nsw_dw <- haven::read_dta('http://www.nber.org/~rdehejia/data/nsw_dw.dta')
+cps_controls <- haven::read_dta('http://users.nber.org/~rdehejia/data/cps_controls.dta')
+glimpse(nsw_dw)
+```
+Then we calculate the ATE using the experimental values:
+
+```{r}
+ate_nsw <- nsw_dw %>%
+  group_by(treat) %>%
+  summarize(re78 = mean(re78)) %>%
+  summarize(ate = diff(re78)) %>%
+  pull(ate)
+
+cat('Experimental ATE: ', ate_nsw)
+```
+
+We now bind the `cps_controls` dataset to the `nsw_dw` data and filter out the untreated units from the `nsw_dw` dataset:
+
+Note that Cunningham's doesn't do so, I don't know why, and that his numbers are a bit weird. For instance, in Table 24, the number of treatment units is equal to 297, which is not the same as the treatment units in nws_dw data nor the total number of units on this dataset.
+
+
+```{r, echo = T}
+dat <- bind_rows(
+  filter(nsw_dw, treat == 1), 
+  cps_controls
+  ) %>%
+  mutate(
+    u74 = if_else(re74 == 0, 1, 0),
+    u75 = if_else(re75 == 0, 1, 0)
+  )
+```
+
+Naive ATE:
+
+```{r}
+naive_ate_dw <- dat %>%
+  group_by(treat) %>%
+  summarize(re78 = mean(re78)) %>%
+  summarize(ate = diff(re78)) %>%
+  pull(ate)
+
+cat('Naive ATE: ', naive_ate_dw)
+```
+Note that we are dealing with the CPS-1 dataset from DW paper (see Figure 21 in Cunningham's book).
+
+
+Estimate the propensity scores using a logistic model and save the fitted values (propensity scores) to the data:
+```{r, echo = T}
+ps_formula <- as.formula('treat ~ 
+                           age + I(age^2) + I(age^3) + education + I(education^2) +
+                           married + nodegree + black + hispanic +
+                           re74 + re75 + u74 + u75 + I(education * re74)')
+
+ps_estimate <- glm(ps_formula, family = binomial(link = 'logit'), data = dat)
+
+dat['score'] <- exp(predict(ps_estimate)) / (1 + exp(predict(ps_estimate)))
+
+# Same could be achieved with:
+# dat['score'] <- predict(ps_estimate, type.predict = 'response')
+```
+
+Check summary statisics and note how they match Cunningham's tables 25 and 26:
+```{r}
+dat %>%
+  filter(treat == 1) %>%
+  select(score) %>%
+  summary
+
+dat %>%
+  filter(treat == 0) %>%
+  select(score) %>%
+  summary
+```
+Plot the histogram to see that there are little overlap in the data (the histogram is zoomed in to see more clearly the overlaping sections):
+```{r ps_histogram}
+dat %>%
+  mutate(treat = as_factor(treat)) %>%
+  ggplot(aes(x = score)) +
+  geom_histogram(aes(color = treat, fill = treat), alpha = .3, position = 'identity', binwidth = 0.05) +
+  scale_y_continuous(breaks = c(0, 50, 100, 150, 200)) +
+  coord_cartesian(ylim=c(0, 200)) +
+  scale_fill_hue() +
+  #facet_wrap(~treat) +
+  theme_bw()
+```
+
+The next step is to estimate the ATE using the propensity scores as weights in a linear regression. First, we have to calculate the weights. They are:
+
+\begin{equation*}
+\color{black}
+\omega_{ate} = \frac{1}{ps} \text{ if treat} == 1 
+\end{equation*}
+
+\begin{equation*}
+\color{black}
+\omega_{ate} = \frac{1}{(1 - ps)} \text{ if treat } == 0
+\end{equation*}
+
+Source: Olmos and Govindasamy (2015) "A Practical Guide for Using Propensity Score Weighting in R", http://www.math.umd.edu/~slud/s818M-MissingData/PropensityScoreWeightingR.pdf
+
+```{r, echo = T}
+# Packages for robust standard errors
+library(lmtest)
+library(sandwich)
+
+# The double headed pipe assign the code after the pipe to the dataset
+dat %<>% mutate(ate_w = if_else(treat == 1, 1/score, 1/(1-score)))
+
+reg_ps1 <- lm(re78 ~ treat, data = dat, weights = ate_w)
+
+
+# Check the following thread to geta an overview of the alternatives to get standard errors for weighted PS estimations:
+# https://stats.stackexchange.com/questions/363340/inverse-probability-weighting-and-robust-estimation/363468#363468
+#jtools::summ(reg_ps1, robust = T)
+coeftest(reg_ps1, vcov = vcovHC(reg_ps1, 'HC3'))
+```
+
+Note that the estimated ATE is equal to -7238, reasonably close from -7000 reported by Cunningham.
+
+Now let's see if the results change if we trim the data to remove values with a propensity score <= 0.05, as he did in the text:
+
+```{r, echo = T}
+dat2 <- dat %>% filter(score >= .05)
+
+# Unweighted:
+reg_ps2 <- lm(re78 ~ treat, data = dat2)
+coeftest(reg_ps2, vcov = vcovHC(reg_ps2, 'HC3'))
+
+# Weighted:
+reg_ps2 <- lm(re78 ~ treat, data = dat2, weights = ate_w)
+coeftest(reg_ps2, vcov = vcovHC(reg_ps2, 'HC3'))
+# ATE ~ 1378
+
+# Controlling for the scores
+reg_ps2 <- lm(re78 ~ treat + score, data = dat2)
+coeftest(reg_ps2, vcov = vcovHC(reg_ps2, 'HC3'))
+
+# Controlling for the scores + covariates
+reg_ps2 <- lm(re78 ~ treat + score + age + I(age^2) + 
+                 education + black + hispanic +
+                 nodegree + re74 + re75, data = dat2)
+coeftest(reg_ps2, vcov = vcovHC(reg_ps2, 'HC3'))
+# ATE ~ 1541
+
+# Regression on covariates only (using trimmed data)
+reg_ps2 <- lm(re78 ~ treat + age + I(age^2) + 
+                 education + black + hispanic +
+                 nodegree + re74 + re75, data = dat2)
+coeftest(reg_ps2, vcov = vcovHC(reg_ps2, 'HC3'))
+```
+
+The final step in this exercise is to use the propensity scores to create a matched dataset from which we will calculate the ATT. We will use the `Matching` package for it:
+
+```{r, echo = T}
+library(Matching)
+
+ps_match <- Match(
+  Y = dat$re78,
+  X = dat$score,
+  Tr = dat$treat,
+  M = 3,
+  estimand = 'ATT'
+)
+
+summary(ps_match)
+```
+
+
