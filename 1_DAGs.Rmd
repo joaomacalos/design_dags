@@ -2,8 +2,12 @@
 title: "1. DAGs and the Structural Causal Model"
 author: "João Pedro S. Macalós"
 date: "9/22/2020"
-output: html_document
+output:
+  bookdown::github_document2:
+    pandoc_args: --webtex
 css: mycss.css
+always_allow_html: true
+bibliography: references.bib
 ---
 
 ```{r global-options, include=FALSE}
@@ -12,6 +16,7 @@ knitr::opts_chunk$set(fig.width=6.5, fig.height=4, fig.path='Figs/',
 ```
 
 ```{r}
+library(bookdown)
 library(tidyverse)
 library(ggpubr)
 library(ggdag)
@@ -37,7 +42,7 @@ library(kableExtra)
 
 * From students to students
 
-* All the material will be made available via the YSI events and my github page
+* All the material will be indicated via the YSI events 
 
 * Disclaimer: This webinars series does not provide any credits
 
@@ -45,7 +50,7 @@ library(kableExtra)
   * Theory + application
   * Focus on young scholars' inputs
   * (Open for suggestions)
-  
+
   
 ## 1.2 Motivation of this series
 
@@ -99,6 +104,9 @@ schedule %>%
 
 
 # 2. Directed Acyclic Graphs (DAGs) and the Structural Causal Model
+
+Main References: @pearl2016causal and @cunningham2020causal.
+
 
 * Simpson's paradox:
 A relationship that holds for the population as a whole is reversed when we stratify the data into subgroups.
@@ -173,34 +181,6 @@ tribble(~age, ~low_exercise, ~high_exercise,
 
 Should we stratify the data?
 
-
-<p>&nbsp;</p>
-<p>&nbsp;</p> 
-<p>&nbsp;</p>
-<p>&nbsp;</p>
-<p>&nbsp;</p> 
-<p>&nbsp;</p>
-
-
-
-But what if the data looked like this:
-
-```{r}
-tribble(~a, ~b, ~c,
-        'Protective measures', 
-        str_c(mt2[1,1], ' out of ', (mt2[1,1] + mt2[3,1]), ' not infected ', '(', 100*round(mt2[1,1] / (mt2[1,1] + mt2[3,1]), 2), '%)'),
-        str_c(mt2[1,2], ' out of ', (mt2[1,2] + mt2[3,2]), ' not infected ', '(', 100*round(mt2[1,2] / (mt2[1,2] + mt2[3,2]), 2), '%)'),
-        'Careless behavior', 
-        str_c(mt2[2,1], ' out of ', (mt2[2,1]+mt2[4,1]), ' not infected ', '(', 100*round(mt2[2,1]/(mt2[2,1]+mt2[4,1]), 2), '%)'),
-        str_c(mt2[2,2], ' out of ', (mt2[2,2]+mt2[4,2]), ' not infected ', '(', 100*round(mt2[2,2]/(mt2[2,2]+mt2[4,2]), 2), '%)'),
-        'Total', 
-        str_c((mt2[1,1] + mt2[2,1]), ' out of ', 2500, ' not infected ', '(', 100*round((mt2[1,1] + mt2[2,1])/2500, 2), '%)'),
-        str_c((mt2[1,2] + mt2[2,2]), ' out of ', 2500, ' not infected ', '(', 100*round((mt2[1,2] + mt2[2,2])/2500, 2), '%)')) %>%
-  knitr::kable(col.names = c('', 'School', 'No school')) %>%
-  kable_styling()
-```
-
-The data is the same...
 
 Solution to the Simpson's paradox: causal theory
 
@@ -398,4 +378,5 @@ fig_pop
 * Can DAGs be used to clarify the hypotheses underlying these different designs?
 
 
+## References
 
